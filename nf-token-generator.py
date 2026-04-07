@@ -152,7 +152,7 @@ def extract_cookie_dict(text):
 
 
 def build_nftoken_link(token):
-    return "https://netflix.com/unsupported?nftoken=" + token
+    return "https://netflix.com/?nftoken=" + token
 
 
 def fetch_nftoken(cookie_dict):
