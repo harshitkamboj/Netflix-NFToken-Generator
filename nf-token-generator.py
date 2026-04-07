@@ -1,54 +1,87 @@
 import json
-import re
 import os
+import re
+import urllib.parse
+from datetime import datetime
 
 import requests
+from urllib3.exceptions import InsecureRequestWarning
 
-# File the script reads the Netflix cookie from.
 INPUT_FILE = "input.txt"
+WATERMARK = (
+    "https://github.com/harshitkamboj | "
+    "website: harshitkamboj.in | "
+    "discord: https://discord.gg/DYJFE9nu5X"
+)
 
-# Netflix GraphQL endpoint used by the mobile client to request an auto-login token.
-API_URL = "https://android13.prod.ftl.netflix.com/graphql"
+API_URL = "https://ios.prod.ftl.netflix.com/iosui/user/15.48"
 
-# Request headers copied from a Netflix Android client so the request matches
-# what Netflix expects for this token-generation operation.
-# The important part is that this request looks like a normal mobile-app call
-# instead of a random generic HTTP request.
-HEADERS = {
-    "User-Agent": "com.netflix.mediaclient/63884 (Linux; U; Android 13; ro; M2007J3SG; Build/TQ1A.230205.001.A2; Cronet/143.0.7445.0)",
-    "Accept": "multipart/mixed;deferSpec=20220824, application/graphql-response+json, application/json",
-    "Content-Type": "application/json",
-    "Origin": "https://www.netflix.com",
-    "Referer": "https://www.netflix.com/",
+QUERY_PARAMS = {
+    "appVersion": "15.48.1",
+    "config": '{"gamesInTrailersEnabled":"false","isTrailersEvidenceEnabled":"false","cdsMyListSortEnabled":"true","kidsBillboardEnabled":"true","addHorizontalBoxArtToVideoSummariesEnabled":"false","skOverlayTestEnabled":"false","homeFeedTestTVMovieListsEnabled":"false","baselineOnIpadEnabled":"true","trailersVideoIdLoggingFixEnabled":"true","postPlayPreviewsEnabled":"false","bypassContextualAssetsEnabled":"false","roarEnabled":"false","useSeason1AltLabelEnabled":"false","disableCDSSearchPaginationSectionKinds":["searchVideoCarousel"],"cdsSearchHorizontalPaginationEnabled":"true","searchPreQueryGamesEnabled":"true","kidsMyListEnabled":"true","billboardEnabled":"true","useCDSGalleryEnabled":"true","contentWarningEnabled":"true","videosInPopularGamesEnabled":"true","avifFormatEnabled":"false","sharksEnabled":"true"}',
+    "device_type": "NFAPPL-02-",
+    "esn": "NFAPPL-02-IPHONE8%3D1-PXA-02026U9VV5O8AUKEAEO8PUJETCGDD4PQRI9DEB3MDLEMD0EACM4CS78LMD334MN3MQ3NMJ8SU9O9MVGS6BJCURM1PH1MUTGDPF4S4200",
+    "idiom": "phone",
+    "iosVersion": "15.8.5",
+    "isTablet": "false",
+    "languages": "en-US",
+    "locale": "en-US",
+    "maxDeviceWidth": "375",
+    "model": "saget",
+    "modelType": "IPHONE8-1",
+    "odpAware": "true",
+    "path": '["account","token","default"]',
+    "pathFormat": "graph",
+    "pixelDensity": "2.0",
+    "progressive": "false",
+    "responseFormat": "json",
 }
-PAYLOAD = {
-    "operationName": "CreateAutoLoginToken",
-    "variables": {"scope": "WEBVIEW_MOBILE_STREAMING"},
-    "extensions": {
-        "persistedQuery": {
-            "version": 102,
-            "id": "76e97129-f4b5-41a0-a73c-12e674896849",
-        }
-    },
+
+BASE_HEADERS = {
+    "User-Agent": "Argo/15.48.1 (iPhone; iOS 15.8.5; Scale/2.00)",
+    "x-netflix.request.attempt": "1",
+    "x-netflix.request.client.user.guid": "A4CS633D7VCBPE2GPK2HL4EKOE",
+    "x-netflix.context.profile-guid": "A4CS633D7VCBPE2GPK2HL4EKOE",
+    "x-netflix.request.routing": '{"path":"/nq/mobile/nqios/~15.48.0/user","control_tag":"iosui_argo"}',
+    "x-netflix.context.app-version": "15.48.1",
+    "x-netflix.argo.translated": "true",
+    "x-netflix.context.form-factor": "phone",
+    "x-netflix.context.sdk-version": "2012.4",
+    "x-netflix.client.appversion": "15.48.1",
+    "x-netflix.context.max-device-width": "375",
+    "x-netflix.context.ab-tests": "",
+    "x-netflix.tracing.cl.useractionid": "4DC655F2-9C3C-4343-8229-CA1B003C3053",
+    "x-netflix.client.type": "argo",
+    "x-netflix.client.ftl.esn": "NFAPPL-02-IPHONE8=1-PXA-02026U9VV5O8AUKEAEO8PUJETCGDD4PQRI9DEB3MDLEMD0EACM4CS78LMD334MN3MQ3NMJ8SU9O9MVGS6BJCURM1PH1MUTGDPF4S4200",
+    "x-netflix.context.locales": "en-US",
+    "x-netflix.context.top-level-uuid": "90AFE39F-ADF1-4D8A-B33E-528730990FE3",
+    "x-netflix.client.iosversion": "15.8.5",
+    "accept-language": "en-US;q=1",
+    "x-netflix.argo.abtests": "",
+    "x-netflix.context.os-version": "15.8.5",
+    "x-netflix.request.client.context": '{"appState":"foreground"}',
+    "x-netflix.context.ui-flavor": "argo",
+    "x-netflix.argo.nfnsm": "9",
+    "x-netflix.context.pixel-density": "2.0",
+    "x-netflix.request.toplevel.uuid": "90AFE39F-ADF1-4D8A-B33E-528730990FE3",
+    "x-netflix.request.client.timezoneid": "Asia/Dhaka",
 }
 
-# Minimum cookie values needed for Netflix to accept the token request.
-# These identify the logged-in Netflix session. Without them, Netflix will
-# reject the token-generation request.
-REQUIRED_COOKIES = ("NetflixId", "SecureNetflixId", "nfvdid")
+COOKIE_KEYS = ("NetflixId", "SecureNetflixId", "nfvdid", "OptanonConsent")
+REQUIRED_COOKIE = "NetflixId"
+
+requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
 
 def ensure_input_file():
-    # Create the input file on first run so the user knows where to paste the cookie.
     if not os.path.exists(INPUT_FILE):
-        with open(INPUT_FILE, "w") as file_handle:
+        with open(INPUT_FILE, "w", encoding="utf-8") as file_handle:
             file_handle.write("NetflixId=...; SecureNetflixId=...; nfvdid=...\n")
         print("Created input.txt")
         print("Add your cookie in input.txt and run again")
         return None
 
-    # Read the cookie text exactly as written in input.txt.
-    with open(INPUT_FILE, "r") as file_handle:
+    with open(INPUT_FILE, "r", encoding="utf-8") as file_handle:
         content = file_handle.read().strip()
 
     if not content:
@@ -60,119 +93,139 @@ def ensure_input_file():
 
 
 def parse_netscape_cookie_line(line):
-    # Support Netscape-exported cookie lines:
-    # domain, flag, path, secure, expiry, name, value
     parts = line.strip().split("\t")
     if len(parts) >= 7:
         return {parts[5]: parts[6]}
     return {}
 
 
+def _decode_cookie_value(value):
+    if isinstance(value, str) and "%" in value:
+        try:
+            return urllib.parse.unquote(value)
+        except Exception:
+            return value
+    return value
+
+
 def extract_cookie_dict(text):
-    # Normalize whatever is inside input.txt into one cookie dictionary.
-    # This lets the script accept Netscape format, JSON, or a raw cookie string.
     cookie_dict = {}
 
-    # Try Netscape format first.
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
         cookie_dict.update(parse_netscape_cookie_line(line))
 
-    if any(name in cookie_dict for name in REQUIRED_COOKIES):
-        return cookie_dict
-
-    # Try JSON input like {"NetflixId":"...", "SecureNetflixId":"..."}.
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
         data = None
 
-    if isinstance(data, dict):
-        for key in (*REQUIRED_COOKIES, "OptanonConsent"):
-            value = data.get(key)
-            if isinstance(value, str):
-                cookie_dict[key] = value
-        if cookie_dict:
-            return cookie_dict
+    if isinstance(data, list):
+        for cookie in data:
+            name = cookie.get("name")
+            value = cookie.get("value")
+            if name in COOKIE_KEYS and isinstance(value, str):
+                cookie_dict[name] = _decode_cookie_value(value)
+    elif isinstance(data, dict):
+        if any(key in data for key in COOKIE_KEYS):
+            for key in COOKIE_KEYS:
+                value = data.get(key)
+                if isinstance(value, str):
+                    cookie_dict[key] = _decode_cookie_value(value)
+        elif isinstance(data.get("cookies"), list):
+            for cookie in data["cookies"]:
+                name = cookie.get("name")
+                value = cookie.get("value")
+                if name in COOKIE_KEYS and isinstance(value, str):
+                    cookie_dict[name] = _decode_cookie_value(value)
 
-    # Fall back to parsing a raw cookie header string.
-    for key in (*REQUIRED_COOKIES, "OptanonConsent"):
-        match = re.search(rf"{re.escape(key)}=([^;\s]+)", text)
+    for key in COOKIE_KEYS:
+        if key in cookie_dict:
+            continue
+        match = re.search(rf"(?<!\w){re.escape(key)}=([^;,\s]+)", text)
         if match:
-            cookie_dict[key] = match.group(1)
+            cookie_dict[key] = _decode_cookie_value(match.group(1))
 
     return cookie_dict
 
 
-def build_cookie_header(cookie_dict):
-    # Convert the parsed dictionary back into the Cookie header format
-    # that Netflix expects on the request.
-    return "; ".join(f"{key}={value}" for key, value in cookie_dict.items())
-
-
 def build_nftoken_link(token):
-    # Netflix accepts the generated token in URL form:
-    # https://www.netflix.com/?nftoken=...
-    # Returning the full link makes the console output directly usable.
-    return "https://www.netflix.com/?nftoken=" + token
+    return "https://netflix.com/unsupported?nftoken=" + token
 
 
 def fetch_nftoken(cookie_dict):
-    # Netflix requires these session cookies before it will generate
-    # an auto-login token for the account session.
-    missing = [name for name in REQUIRED_COOKIES if not cookie_dict.get(name)]
-    if missing:
-        raise ValueError("Missing required cookies: " + ", ".join(missing))
+    netflix_id = cookie_dict.get(REQUIRED_COOKIE)
+    if not netflix_id:
+        raise ValueError("Missing required cookie: NetflixId")
 
-    headers = dict(HEADERS)
-    headers["Cookie"] = build_cookie_header(cookie_dict)
+    headers = dict(BASE_HEADERS)
+    headers["Cookie"] = f"NetflixId={netflix_id}"
 
-    # This POST asks Netflix to run the GraphQL mutation createAutoLoginToken.
-    # If the cookie belongs to a valid session and the account is allowed to
-    # use this flow, Netflix returns the nftoken inside:
-    # data.createAutoLoginToken
-    #
-    # That token can then be placed into a Netflix URL as ?nftoken=...
-    response = requests.post(API_URL, headers=headers, json=PAYLOAD, timeout=30)
+    response = requests.get(
+        API_URL,
+        params=QUERY_PARAMS,
+        headers=headers,
+        timeout=30,
+        verify=False,
+    )
     response.raise_for_status()
 
     data = response.json()
-    data_block = data.get("data") or {}
-    token = data_block.get("createAutoLoginToken")
-    if token:
-        return token
+    token_data = (
+        (((data.get("value") or {}).get("account") or {}).get("token") or {}).get("default")
+        or {}
+    )
+    token = token_data.get("token")
+    expires = token_data.get("expires")
 
-    errors = data.get("errors")
-    if errors:
-        raise ValueError(json.dumps(errors, ensure_ascii=True))
+    if not token:
+        raise ValueError("No token found in response.")
 
-    raise ValueError("Token not found in response.")
+    if isinstance(expires, int) and len(str(expires)) == 13:
+        expires //= 1000
+
+    return token, expires
+
+
+def format_expiry(expires):
+    if not isinstance(expires, (int, float)):
+        return "Unknown"
+    try:
+        return datetime.fromtimestamp(expires).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return str(expires)
 
 
 def main():
-    # Step 1: load the cookie text from input.txt.
+    print(WATERMARK)
+    print()
     raw_cookie = ensure_input_file()
     if raw_cookie is None:
         return
 
-    # Step 2: extract the required Netflix cookie values from that text.
     cookie_dict = extract_cookie_dict(raw_cookie)
     if not cookie_dict:
         print("No valid cookie found in input.txt.")
+        print()
         return
 
     try:
-        # Step 3: request the nftoken from Netflix.
-        token = fetch_nftoken(cookie_dict)
+        token, expires = fetch_nftoken(cookie_dict)
 
-        # Step 4: print the ready-to-use Netflix link in the console.
-        print(build_nftoken_link(token))
+        print("Login URL: " + build_nftoken_link(token))
+        print()
+        print("Expires : " + format_expiry(expires))
     except requests.RequestException as exc:
         print("Request failed: " + str(exc))
+        print()
     except ValueError as exc:
         print("Failed: " + str(exc))
+        print()
+    finally:
+        print()
+        print(WATERMARK)
 
 
 if __name__ == "__main__":
